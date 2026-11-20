@@ -18,6 +18,8 @@ from __future__ import annotations
 ACGT = frozenset("ACGT")
 VALID_GTS = ("0/1", "1/1")
 MAX_NAME_LEN = 128
+HEADER_FIELDS = ("POS", "REF", "ALT", "GT")
+BOM = "\ufeff"
 
 
 class ValidationError(Exception):
@@ -30,6 +32,8 @@ class ValidationError(Exception):
 def parse_reference(raw: bytes | str) -> str:
     """解析参考序列上传内容，支持纯文本和单记录 FASTA。仅接受大写 ACGT。"""
     text = _decode(raw)
+    if text.startswith(BOM):
+        text = text[1:]
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         raise ValidationError("参考序列为空。")
@@ -59,18 +63,26 @@ def parse_reference(raw: bytes | str) -> str:
 def parse_tsv(raw: bytes | str) -> list[dict]:
     """解析样本 TSV，返回原始行列表。
 
-    可选首行表头（首列不是整数即视为表头）。空行跳过。
-    每行必须恰好 4 列：POS(1-based)、REF、ALT、GT。
+    * 文件开头允许 UTF-8 BOM（解码时已剥离）。
+    * 只有「首个非空行」恰好是 POS/REF/ALT/GT 四列时才视为表头并跳过；
+      其他任何首行都按数据行解析（因此首条 POS=0 会按真实行号报错，
+      而不会被当成表头静默丢弃）。
+    * 空行跳过；``lineno`` 是原文件中的真实行号。
+    * 每行必须恰好 4 列：POS(1-based)、REF、ALT、GT。
     """
     text = _decode(raw)
+    if text.startswith(BOM):
+        text = text[1:]
     rows: list[dict] = []
+    header_checked = False
     for lineno, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
         fields = [f.strip() for f in line.split("\t")]
-        if not rows and fields and not _is_int(fields[0]):
-            # 首行且首列不是数字 -> 视为表头
-            continue
+        if not header_checked:
+            header_checked = True
+            if tuple(fields) == HEADER_FIELDS:
+                continue
         if len(fields) != 4:
             raise ValidationError(f"第 {lineno} 行：应为 4 列（POS\\tREF\\tALT\\tGT），实际 {len(fields)} 列。")
         pos_s, ref, alt, gt = fields

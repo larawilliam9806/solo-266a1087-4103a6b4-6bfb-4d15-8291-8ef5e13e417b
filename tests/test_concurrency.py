@@ -3,6 +3,7 @@
 import os
 import tempfile
 import threading
+import time
 import unittest
 
 from app import create_app, services
@@ -26,6 +27,9 @@ class ConcurrencyTest(unittest.TestCase):
         self.app.config.update(TESTING=True, SECRET_KEY="test")
         self.errors: list[Exception] = []
         self.expected_rejections = 0
+        # 让上传、换参考、读取线程从同一时刻开始，避免调度先后导致本测试
+        # 偶尔根本没发生交错（应当验证的是交错时的一致性，而不是调度随机性）
+        self.start = threading.Barrier(4)
 
     def tearDown(self):
         os.environ.pop("DATABASE_PATH", None)
@@ -37,9 +41,11 @@ class ConcurrencyTest(unittest.TestCase):
             services.upload_reference(REF_V1)
 
         def upload_samples():
+            self.start.wait()
             for i in range(15):
                 name = f"S{i % 6}"  # 含同名重传
                 gt = "1/1" if i % 2 else "0/1"
+                time.sleep(0.003)  # 与参考轮换形成稳定交错，不依赖线程调度巧合
                 try:
                     with self.app.app_context():
                         # 每条都针对 V1 有效；换参考后由系统重验
@@ -51,6 +57,8 @@ class ConcurrencyTest(unittest.TestCase):
                     self.errors.append(exc)
 
         def rotate_references():
+            self.start.wait()
+            time.sleep(0.01)  # 先让少量上传成功，再轮换，保证确实发生交错
             for ref in REFS[1:]:
                 try:
                     with self.app.app_context():
@@ -59,6 +67,7 @@ class ConcurrencyTest(unittest.TestCase):
                     self.errors.append(exc)
 
         def reader():
+            self.start.wait()
             for _ in range(40):
                 try:
                     with self.app.app_context():

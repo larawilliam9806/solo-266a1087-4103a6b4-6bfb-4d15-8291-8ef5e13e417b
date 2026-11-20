@@ -78,8 +78,14 @@ CREATE TABLE IF NOT EXISTS samples (
     status            TEXT NOT NULL CHECK (status IN ('VALID', 'NEEDS_REUPLOAD')),
     error             TEXT,
     raw_tsv           TEXT NOT NULL,
+    error_line        INTEGER,
     uploaded_at       TEXT NOT NULL DEFAULT (datetime('now')),
     revalidated_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS app_state (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sample_variants (
@@ -101,10 +107,38 @@ CREATE INDEX IF NOT EXISTS idx_variant_sample ON sample_variants(sample_id);
 """
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """旧库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
+
+    多进程同时启动时可能都判定缺列，后执行的 ALTER 会报 duplicate column，
+    这里视为已完成。
+    """
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(samples)")
+    }
+    if "error_line" not in columns:
+        try:
+            conn.execute("ALTER TABLE samples ADD COLUMN error_line INTEGER")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+
+
 def init_db(app: Flask) -> None:
+    """建表 / 轻量迁移。
+
+    已在运行中的进程可能再次进入这里（每个请求都会走 init_app），
+    因此必须幂等：建表语句带 IF NOT EXISTS，补列前先查 PRAGMA。
+    真正的数据升级（修补历史漏行）由 services.run_upgrade 在写事务内完成，
+    不在这里做，以免与并发写请求互相踩踏。
+    """
     conn = sqlite3.connect(app.config["DATABASE"])
+    conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()

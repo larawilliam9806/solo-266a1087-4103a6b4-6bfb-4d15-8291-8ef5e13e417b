@@ -47,12 +47,20 @@ def create_app() -> Flask:
             return redirect(url_for("index"))
         flash(
             f"参考已更新（长度 {result['length']}）。重新校验 "
-            f"{len(result['revalidated'])} 个样本通过，"
-            f"{len(result['failed'])} 个样本标记为待重传。",
+            f"{result['revalidated'] + result['failed']} 个样本，"
+            f"{result['revalidated']} 个通过，"
+            f"{result['failed']} 个样本标记为待重传。",
             "success",
         )
-        for row in result["failed"]:
-            flash(f"样本「{row['name']}」待重传：{row['error']}", "warning")
+        for row in result["failed_rows"]:
+            line = f"（原文件第 {row['error_line']} 行）" if row["error_line"] else ""
+            flash(f"样本「{row['name']}」待重传{line}：{row['error']}", "warning")
+        if result["failed"] > len(result["failed_rows"]):
+            flash(
+                f"另有 {result['failed'] - len(result['failed_rows'])} 个待重传样本，"
+                f"详见样本列表。",
+                "warning",
+            )
         return redirect(url_for("index"))
 
     @app.post("/samples")

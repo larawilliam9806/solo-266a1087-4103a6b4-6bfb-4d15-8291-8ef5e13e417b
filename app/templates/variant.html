@@ -3,6 +3,10 @@
 {% block content %}
 <section class="card">
   <p><a href="{{ url_for('index') }}">← 返回汇总</a></p>
+  {% if variant.upgrade_pending %}
+  <h2>数据升级中</h2>
+  <p class="hint">旧库正在按保留的原始 TSV 重验样本，完成后即可查看详情，请稍后刷新。</p>
+  {% else %}
   <h2>规范变异 {{ variant.pos }} : {{ variant.ref }} → {{ variant.alt }}</h2>
   <p class="hint">共 {{ variant.rows|length }} 个样本检出；下表保留每份 TSV 中书写的原始位点与等位基因。</p>
   <table>
@@ -21,5 +25,6 @@
     {% endfor %}
     </tbody>
   </table>
+  {% endif %}
 </section>
 {% endblock %}
